@@ -1,208 +1,186 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+import seaborn as sns
+import matplotlib.pyplot as plt
 import random
 import time
 
-st.set_page_config(page_title="Bird Strike Financial Risk", layout="wide")
+# --------------------------------------------------
+# Page configuration
+# --------------------------------------------------
+st.set_page_config(
+    page_title="Bird Strike A/B Testing App",
+    layout="wide"
+)
 
-if "group" not in st.session_state:
-    st.session_state["group"] = random.choice(["A", "B"])
-    st.session_state["chart_render_time"] = 0
-    st.session_state["interactions"] = 0
-    st.session_state["rating"] = None
-    st.session_state["ab_log"] = []
+# --------------------------------------------------
+# Session state
+# --------------------------------------------------
+if "chart_choice" not in st.session_state:
+    st.session_state.chart_choice = None
 
-st.sidebar.markdown("## Bird Strike Financial Risk Analysis")
-st.sidebar.info(
-    "**Business Question:** Which airports have the highest financial risk from bird strikes, "
+if "start_time" not in st.session_state:
+    st.session_state.start_time = None
+
+if "results" not in st.session_state:
+    st.session_state.results = []
+
+# --------------------------------------------------
+# App title and question
+# --------------------------------------------------
+st.title("Bird Strike Financial Risk App")
+
+st.header("Business Question")
+st.write(
+    "Which airports have the highest financial risk from bird strikes, "
     "so airlines should prioritize extra insurance coverage or higher coverage limits there?"
 )
 
-uploaded_file = st.sidebar.file_uploader("Upload a CSV dataset", type=["csv"])
+# --------------------------------------------------
+# Sidebar
+# --------------------------------------------------
+with st.sidebar:
+    st.header("Settings")
+    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
-st.title("Bird Strike Financial Risk by Airport")
-st.info(
-    "**Business Question:** Which airports have the highest financial risk from bird strikes, "
-    "so airlines should prioritize extra insurance coverage or higher coverage limits there?"
-)
-
+# Stop app until a file is uploaded
 if uploaded_file is None:
-    st.warning("Please upload a CSV file to use the app.")
+    st.info("Please upload a CSV file in the sidebar to start the analysis.")
     st.stop()
 
+# --------------------------------------------------
+# Load data
+# --------------------------------------------------
 df = pd.read_csv(uploaded_file)
 
-min_cost = st.sidebar.slider(
-    "Minimum Total Cost ($)",
-    min_value=0,
-    max_value=int(df["Cost Total $"].max()),
-    value=0,
-    step=1000
-)
+# --------------------------------------------------
+# Dataset preview in a container
+# --------------------------------------------------
+with st.container():
+    st.subheader("Dataset Preview")
 
-show_insurance = st.sidebar.checkbox("Show Insurance Classification", value=False)
+    col1, col2 = st.columns(2)
 
-num_airports = st.sidebar.slider(
-    "Number of Airports to Display",
-    min_value=5,
-    max_value=min(30, len(df.groupby("Airport Name"))),
-    value=15
-)
+    with col1:
+        st.write("First rows of the dataset:")
+        st.dataframe(df.head())
 
-df_filtered = df[df["Cost Total $"] >= min_cost].copy()
-df_filtered["Effect Amount of damage"] = df_filtered["Effect Amount of damage"].fillna("None")
+    with col2:
+        st.write("Dataset shape:")
+        st.write(df.shape)
+        st.write("Columns:")
+        st.write(list(df.columns))
 
-col1, col2, col3 = st.columns([2, 1, 1])
-with col2:
-    st.caption(f"📊 You are in **Group {st.session_state['group']}**")
+# --------------------------------------------------
+# Variable selection
+# --------------------------------------------------
+st.subheader("Select Variables")
 
-start_time = time.time()
+all_columns = df.columns.tolist()
+numeric_columns = df.select_dtypes(include="number").columns.tolist()
 
-if st.session_state["group"] == "A":
-    airport_cost = (
-        df_filtered.groupby("Airport Name")["Cost Total $"]
-        .sum()
-        .sort_values(ascending=False)
-        .head(num_airports)
-    )
-
-    insurance_threshold = df_filtered.groupby("Airport Name")["Cost Total $"].sum().median()
-
-    if show_insurance:
-        colors = ["green" if cost >= insurance_threshold else "red" for cost in airport_cost.values]
-    else:
-        colors = "lightblue"
-
-    fig = px.bar(
-        x=airport_cost.values,
-        y=airport_cost.index,
-        orientation="h",
-        title="Total Cost by Airport (Group A)",
-        labels={"x": "Total Cost ($)", "y": "Airport"},
-        color=colors if show_insurance else None
-    )
-
-    if show_insurance:
-        fig.update_traces(marker_color=colors)
-    else:
-        fig.update_traces(marker_color="lightblue")
-
-    fig.update_layout(height=600, showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
-
-else:
-    airport_damage = (
-        df_filtered.groupby(["Airport Name", "Effect Amount of damage"])
-        .size()
-        .unstack(fill_value=0)
-    )
-
-    top_airports = (
-        df_filtered.groupby("Airport Name")
-        .size()
-        .sort_values(ascending=False)
-        .head(num_airports)
-        .index
-    )
-
-    airport_damage = airport_damage.loc[top_airports]
-    chart_data = airport_damage.reset_index().melt(
-        id_vars="Airport Name",
-        var_name="Damage Level",
-        value_name="Count"
-    )
-
-    color_map = {
-        "None": "#90EE90",
-        "Minor": "#FFD700",
-        "Medium": "#FFA500",
-        "Substantial": "#FF4500",
-        "B": "#4169E1",
-        "C": "#6A5ACD"
-    }
-
-    fig = px.bar(
-        chart_data,
-        y="Airport Name",
-        x="Count",
-        color="Damage Level",
-        orientation="h",
-        barmode="stack",
-        title="Incident Count by Damage Severity (Group B)",
-        labels={"Count": "Number of Incidents", "Airport Name": "Airport"},
-        color_discrete_map=color_map
-    )
-
-    fig.update_layout(height=600)
-    st.plotly_chart(fig, use_container_width=True)
-
-chart_render_time = time.time() - start_time
-st.session_state["chart_render_time"] = chart_render_time
-
-st.divider()
-col1, col2, col3, col4 = st.columns(4)
+col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("👍 Useful"):
-        st.session_state["rating"] = "useful"
-        st.session_state["interactions"] += 1
-        st.success("Thank you for your feedback!")
+    airport_col = st.selectbox("Select the airport column:", all_columns)
 
 with col2:
-    if st.button("👎 Not Useful"):
-        st.session_state["rating"] = "not_useful"
-        st.session_state["interactions"] += 1
-        st.info("We'll improve this visualization!")
+    cost_col = st.selectbox("Select the cost column:", numeric_columns)
 
-with col3:
-    if st.button("⭐ Clear Rating"):
-        st.session_state["rating"] = None
+# --------------------------------------------------
+# Optional controls
+# --------------------------------------------------
+with st.expander("Optional filters"):
+    top_n = st.slider("Number of airports to display:", min_value=5, max_value=20, value=10)
 
-st.divider()
-st.subheader("A/B Testing Results")
+# --------------------------------------------------
+# Prepare data
+# --------------------------------------------------
+data = df[[airport_col, cost_col]].dropna()
 
-if st.session_state["rating"] is not None:
-    session_log = {
-        "group": st.session_state["group"],
-        "rating": st.session_state["rating"],
-        "interactions": st.session_state["interactions"],
-        "chart_render_time": round(chart_render_time, 3)
-    }
+summary = data.groupby(airport_col).agg(
+    strike_count=(cost_col, "count"),
+    total_cost=(cost_col, "sum"),
+    avg_cost=(cost_col, "mean")
+).reset_index()
 
-    if session_log not in st.session_state["ab_log"]:
-        st.session_state["ab_log"].append(session_log)
+summary = summary.sort_values("total_cost", ascending=False).head(top_n)
 
-if len(st.session_state["ab_log"]) > 0:
-    log_df = pd.DataFrame(st.session_state["ab_log"])
+# --------------------------------------------------
+# A/B testing section
+# --------------------------------------------------
+st.subheader("A/B Testing Experiment")
+st.write("Click the button below to display one of the two charts at random.")
 
-    metrics_by_group = []
-    for group in ["A", "B"]:
-        group_data = log_df[log_df["group"] == group]
-        if len(group_data) > 0:
-            useful_count = (group_data["rating"] == "useful").sum()
-            not_useful_count = (group_data["rating"] == "not_useful").sum()
-            total_ratings = useful_count + not_useful_count
+if st.button("Show random chart"):
+    st.session_state.chart_choice = random.choice(["A", "B"])
+    st.session_state.start_time = time.time()
 
-            metrics_by_group.append({
-                "Group": f"Group {group}",
-                "Sessions": len(group_data),
-                "Useful": useful_count,
-                "Not Useful": not_useful_count,
-                "Usefulness Rate": f"{(useful_count / total_ratings * 100):.1f}%" if total_ratings > 0 else "N/A",
-                "Avg Interactions": f"{group_data['interactions'].mean():.1f}",
-                "Avg Render Time (s)": f"{group_data['chart_render_time'].mean():.3f}"
-            })
+# --------------------------------------------------
+# Show selected chart
+# --------------------------------------------------
+if st.session_state.chart_choice is not None:
+    fig, ax = plt.subplots(figsize=(10, 6))
 
-    if metrics_by_group:
-        metrics_df = pd.DataFrame(metrics_by_group)
-        st.dataframe(metrics_df, use_container_width=True, hide_index=True)
-else:
-    st.caption("No ratings yet. Rate a visualization above to start A/B testing.")
+    if st.session_state.chart_choice == "A":
+        st.write("### Chart A: Total cost by airport")
+        sns.barplot(data=summary, x="total_cost", y=airport_col, ax=ax)
+        ax.set_xlabel("Total Cost")
+        ax.set_ylabel("Airport")
 
-with st.expander("📋 Debug Info"):
-    st.write(f"**Your Group:** {st.session_state['group']}")
-    st.write(f"**Interactions:** {st.session_state['interactions']}")
-    st.write(f"**Current Rating:** {st.session_state['rating']}")
-    st.write(f"**Chart Render Time:** {chart_render_time:.3f}s")
-    st.write(f"**Log Size:** {len(st.session_state['ab_log'])} sessions")
+    else:
+        st.write("### Chart B: Average cost per strike by airport")
+        sns.barplot(data=summary, x="avg_cost", y=airport_col, ax=ax)
+        ax.set_xlabel("Average Cost per Strike")
+        ax.set_ylabel("Airport")
+
+    plt.tight_layout()
+    st.pyplot(fig)
+
+    # --------------------------------------------------
+    # Answer button
+    # --------------------------------------------------
+    if st.button("Did I answer your question?"):
+        end_time = time.time()
+        response_time = round(end_time - st.session_state.start_time, 2)
+
+        st.success(f"You answered in {response_time} seconds.")
+
+        st.session_state.results.append({
+            "chart": st.session_state.chart_choice,
+            "time_seconds": response_time
+        })
+
+        st.session_state.chart_choice = None
+        st.session_state.start_time = None
+
+# --------------------------------------------------
+# Results section
+# --------------------------------------------------
+if len(st.session_state.results) > 0:
+    st.subheader("Experiment Results")
+
+    results_df = pd.DataFrame(st.session_state.results)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.write("Recorded responses:")
+        st.dataframe(results_df)
+
+    with col2:
+        st.write("Average response time by chart:")
+        avg_times = results_df.groupby("chart", as_index=False)["time_seconds"].mean()
+        st.dataframe(avg_times)
+
+# --------------------------------------------------
+# Optional explanation section
+# --------------------------------------------------
+with st.expander("How this app works"):
+    st.write(
+        "This app uses A/B testing to compare two chart designs. "
+        "When the user clicks 'Show random chart', the app randomly displays Chart A or Chart B. "
+        "Then the app measures how long it takes until the user clicks "
+        "'Did I answer your question?'. The goal is to compare which chart helps users answer "
+        "the business question more effectively."
+    )
