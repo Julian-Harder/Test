@@ -9,6 +9,7 @@ import time
 # Configure page
 st.set_page_config(page_title="Analysis Tool", layout="wide")
 st.title("Analysis Tool")
+st.write("**Team members:** Julian Harder, Ian Dromundo, Justin, Luuk van den Hoek")
 
 # Initialize session state
 if 'df' not in st.session_state:
@@ -273,3 +274,4 @@ else:
     5. **View Results** - See the relationship between variables and feature importance
     6. **Provide Feedback** - Let us know if the charts answered your question (time tracked!)
     """)
+
