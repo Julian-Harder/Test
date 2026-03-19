@@ -1,236 +1,275 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import random
+import plotly.graph_objects as go
+import numpy as np
+from io import StringIO
 import time
 
-# --------------------------------------------------
-# Page config
-# --------------------------------------------------
-st.set_page_config(page_title="A/B Testing Analysis Tool", layout="wide")
-st.title("A/B Testing Analysis Tool")
+# Configure page
+st.set_page_config(page_title="Analysis Tool", layout="wide")
+st.title("Analysis Tool")
 
-# --------------------------------------------------
-# Session state
-# --------------------------------------------------
-if "df" not in st.session_state:
-    st.session_state["df"] = None
-if "business_question" not in st.session_state:
-    st.session_state["business_question"] = ""
-if "chart_choice" not in st.session_state:
-    st.session_state["chart_choice"] = None
-if "start_time" not in st.session_state:
-    st.session_state["start_time"] = None
-if "ab_log" not in st.session_state:
-    st.session_state["ab_log"] = []
+# Initialize session state
+if 'df' not in st.session_state:
+    st.session_state['df'] = None
+if 'df_imputed' not in st.session_state:
+    st.session_state['df_imputed'] = None
+if 'question' not in st.session_state:
+    st.session_state['question'] = ""
+if 'ab_log' not in st.session_state:
+    st.session_state['ab_log'] = []
+if 'charts_generated' not in st.session_state:
+    st.session_state['charts_generated'] = False
+if 'chart_generation_time' not in st.session_state:
+    st.session_state['chart_generation_time'] = None
+if 'analysis_start_time' not in st.session_state:
+    st.session_state['analysis_start_time'] = None
 
-# --------------------------------------------------
-# Load uploaded CSV
-# --------------------------------------------------
-@st.cache_data
-def load_data(file):
-    return pd.read_csv(file)
+# Sidebar: File uploader
+st.sidebar.header("📊 Data Upload")
+uploaded_file = st.sidebar.file_uploader("Upload CSV dataset", type=['csv'])
 
-# --------------------------------------------------
-# Sidebar
-# --------------------------------------------------
-with st.sidebar:
-    st.header("📁 Data Upload")
-    uploaded_file = st.file_uploader("Upload CSV dataset", type=["csv"])
+if uploaded_file is not None:
+    st.session_state['df'] = pd.read_csv(uploaded_file)
+    st.sidebar.success(f"✓ Dataset loaded: {st.session_state['df'].shape[0]} rows, {st.session_state['df'].shape[1]} columns")
 
-if uploaded_file is None:
-    st.info("👈 Upload a CSV dataset in the sidebar to get started.")
-    st.stop()
+    # Mean imputation
+    st.session_state['df_imputed'] = st.session_state['df'].copy()
+    numeric_cols = st.session_state['df_imputed'].select_dtypes(include=[np.number]).columns
 
-df = load_data(uploaded_file)
-st.session_state["df"] = df
+    for col in numeric_cols:
+        if st.session_state['df_imputed'][col].isnull().sum() > 0:
+            mean_val = st.session_state['df_imputed'][col].mean()
+            st.session_state['df_imputed'][col].fillna(mean_val, inplace=True)
 
-# --------------------------------------------------
-# Business question logic
-# --------------------------------------------------
-uploaded_name = uploaded_file.name.lower()
+    st.sidebar.info(f"✓ Mean imputation applied to numeric columns")
 
-if uploaded_name == "birdstrikes.csv":
-    business_question = (
-        "Which airports have the highest financial risk from bird strikes, "
-        "so airlines should prioritize extra insurance coverage or higher coverage limits there?"
-    )
-else:
-    business_question = st.text_input(
-        "Enter your business question:",
-        value=st.session_state["business_question"],
-        placeholder="Write the business question you want the charts to answer"
-    )
-    st.session_state["business_question"] = business_question
+# Main content
+if st.session_state['df_imputed'] is not None:
+    df = st.session_state['df_imputed']
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
 
-# --------------------------------------------------
-# Dataset preview
-# --------------------------------------------------
-with st.container():
-    st.subheader("Dataset Preview")
+    # ===== QUESTION SECTION (TOP) =====
+    st.subheader("❓ Step 1: Your Analysis Question")
+    st.write("**What question are you trying to answer?**")
 
-    col1, col2 = st.columns(2)
-
+    col1, col2 = st.columns([4, 1])
     with col1:
-        st.write("First rows:")
-        st.dataframe(df.head())
+        question = st.text_area(
+            "Enter your analysis question:",
+            value=st.session_state['question'],
+            placeholder="e.g., Is there a strong relationship between X and Y?",
+            height=80,
+            label_visibility="collapsed"
+        )
+        st.session_state['question'] = question
 
     with col2:
-        st.write("Shape:", df.shape)
-        st.write("Columns:", list(df.columns))
+        if st.button("🗑️ Clear Question"):
+            st.session_state['question'] = ""
+            st.rerun()
 
-# --------------------------------------------------
-# Show question
-# --------------------------------------------------
-st.subheader("Business Question")
-if business_question.strip():
-    st.write(business_question)
-else:
-    st.warning("Please enter a business question to continue.")
-    st.stop()
-
-# --------------------------------------------------
-# Variable selection
-# --------------------------------------------------
-numeric_cols = df.select_dtypes(include="number").columns.tolist()
-all_cols = df.columns.tolist()
-
-st.subheader("Select Variables")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    category_col = st.selectbox("Select category variable:", all_cols)
-
-with col2:
-    value_col = st.selectbox("Select numeric variable:", numeric_cols)
-
-with st.expander("Optional settings"):
-    top_n = st.slider("Number of categories to show", min_value=5, max_value=20, value=10)
-
-# --------------------------------------------------
-# Prepare aggregated data
-# --------------------------------------------------
-data = df[[category_col, value_col]].dropna()
-
-summary = data.groupby(category_col).agg(
-    total_value=(value_col, "sum"),
-    average_value=(value_col, "mean"),
-    count_value=(value_col, "count")
-).reset_index()
-
-summary = summary.sort_values("total_value", ascending=False).head(top_n)
-
-# --------------------------------------------------
-# A/B testing section
-# --------------------------------------------------
-st.subheader("A/B Testing")
-
-st.write(
-    "Click the button below to randomly display one of two charts. "
-    "Then click the second button to record whether the chart answered the question."
-)
-
-if st.button("Show random chart"):
-    st.session_state["chart_choice"] = random.choice(["A", "B"])
-    st.session_state["start_time"] = time.time()
-
-# --------------------------------------------------
-# Show chart A or B randomly
-# --------------------------------------------------
-if st.session_state["chart_choice"] is not None:
-    if st.session_state["chart_choice"] == "A":
-        st.write("### Chart A: Total value by category")
-
-        fig = px.bar(
-            summary,
-            x="total_value",
-            y=category_col,
-            orientation="h",
-            title=f"Total {value_col} by {category_col}",
-            labels={"total_value": f"Total {value_col}", category_col: category_col}
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    else:
-        st.write("### Chart B: Average value by category")
-
-        fig = px.bar(
-            summary,
-            x="average_value",
-            y=category_col,
-            orientation="h",
-            title=f"Average {value_col} by {category_col}",
-            labels={"average_value": f"Average {value_col}", category_col: category_col}
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-    # --------------------------------------------------
-    # Feedback buttons
-    # --------------------------------------------------
-    col1, col2 = st.columns(2)
-
-    with col1:
-        if st.button("✅ Did I answer your question?"):
-            response_time = round(time.time() - st.session_state["start_time"], 2)
-
-            st.session_state["ab_log"].append({
-                "question": business_question,
-                "chart": st.session_state["chart_choice"],
-                "answered": "Yes",
-                "time_seconds": response_time
-            })
-
-            st.success(f"Feedback recorded. Response time: {response_time} seconds.")
-            st.session_state["chart_choice"] = None
-            st.session_state["start_time"] = None
-
-    with col2:
-        if st.button("❌ No, this did not answer my question"):
-            response_time = round(time.time() - st.session_state["start_time"], 2)
-
-            st.session_state["ab_log"].append({
-                "question": business_question,
-                "chart": st.session_state["chart_choice"],
-                "answered": "No",
-                "time_seconds": response_time
-            })
-
-            st.info(f"Feedback recorded. Response time: {response_time} seconds.")
-            st.session_state["chart_choice"] = None
-            st.session_state["start_time"] = None
-
-# --------------------------------------------------
-# Results
-# --------------------------------------------------
-if len(st.session_state["ab_log"]) > 0:
     st.divider()
-    st.subheader("A/B Testing Results")
 
-    log_df = pd.DataFrame(st.session_state["ab_log"])
-    st.dataframe(log_df, use_container_width=True, hide_index=True)
+    # ===== VARIABLE SELECTION SECTION =====
+    st.subheader("📊 Step 2: Select Variables")
+    col1, col2 = st.columns(2)
 
-    summary_results = (
-        log_df.groupby("chart")
-        .agg(
-            responses=("chart", "count"),
-            avg_time=("time_seconds", "mean")
+    with col1:
+        st.write("**Dependent Variable (Y-axis):**")
+        dependent_var = st.selectbox(
+            "What do you want to predict/analyze?",
+            numeric_cols,
+            key="dependent_select",
+            label_visibility="collapsed"
         )
-        .reset_index()
-    )
 
-    st.write("### Average response time by chart")
-    st.dataframe(summary_results, use_container_width=True, hide_index=True)
+    with col2:
+        st.write("**Independent Variable (X-axis):**")
+        available_independent = [col for col in numeric_cols if col != dependent_var]
+        if available_independent:
+            independent_var = st.selectbox(
+                "What is the explanatory variable?",
+                available_independent,
+                key="independent_select",
+                label_visibility="collapsed"
+            )
+        else:
+            st.warning("Not enough numeric features for comparison")
+            independent_var = None
 
-# --------------------------------------------------
-# Explanation
-# --------------------------------------------------
-with st.expander("How this app works"):
-    st.write(
-        "The app lets the user upload a CSV file and choose variables for analysis. "
-        "If the uploaded file is birdstrikes.csv, the app automatically shows the predefined "
-        "bird strike business question. Otherwise, the user enters a custom business question. "
-        "The app then uses A/B testing: when the user clicks the button, it randomly shows "
-        "Chart A or Chart B. After that, the user indicates whether the chart answered the question. "
-        "The app records the chart shown and the response time."
-    )
+    st.divider()
+
+    # ===== GENERATE CHARTS BUTTON =====
+    st.subheader("📈 Step 3: Generate Analysis")
+
+    # Validation
+    has_question = st.session_state['question'].strip() != ""
+    has_variables = dependent_var is not None and independent_var is not None
+
+    if not has_question:
+        st.warning("⚠️ Please enter a question first")
+    if not has_variables:
+        st.warning("⚠️ Please select both dependent and independent variables")
+
+    if st.button(
+        "🔍 Generate Charts",
+        disabled=not (has_question and has_variables),
+        use_container_width=True,
+        type="primary"
+    ):
+        st.session_state['charts_generated'] = True
+        st.session_state['analysis_start_time'] = time.time()
+        st.rerun()
+
+    # ===== DISPLAY CHARTS (ONLY AFTER BUTTON CLICK) =====
+    if st.session_state['charts_generated'] and dependent_var and independent_var:
+        st.divider()
+        st.subheader("📊 Analysis Results")
+        col1, col2 = st.columns(2)
+
+        # Chart 1: Scatter plot with regression line
+        with col1:
+            st.write(f"**{dependent_var} vs {independent_var}**")
+            # Create scatter plot with trend line
+            fig1 = px.scatter(
+                df,
+                x=independent_var,
+                y=dependent_var,
+                trendline="ols",
+                title=f"Regression Analysis",
+                labels={independent_var: independent_var, dependent_var: dependent_var}
+            )
+            fig1.update_layout(height=500)
+            st.plotly_chart(fig1, use_container_width=True)
+
+        # Chart 2: Feature correlation ranking
+        with col2:
+            st.write(f"**Top Features Correlated with {dependent_var}**")
+
+            # Calculate correlations
+            correlations = df[numeric_cols].corr()[dependent_var].drop(dependent_var)
+            correlations = correlations.abs().sort_values(ascending=False).head(10)
+
+            # Create bar chart
+            fig2 = px.bar(
+                x=correlations.values,
+                y=correlations.index,
+                orientation='h',
+                title=f"Feature Importance",
+                labels={'x': 'Absolute Correlation', 'y': 'Feature'},
+                color=correlations.values,
+                color_continuous_scale='Viridis'
+            )
+            fig2.update_layout(height=500, showlegend=False)
+            st.plotly_chart(fig2, use_container_width=True)
+
+        # A/B Testing Section
+        st.divider()
+        st.subheader("⏱️ Step 4: Feedback")
+
+        # Display elapsed time
+        if st.session_state['analysis_start_time'] is not None:
+            elapsed_time = time.time() - st.session_state['analysis_start_time']
+            st.metric("Time Analyzing Charts", f"{elapsed_time:.1f} seconds")
+
+        # Feedback buttons
+        col1, col2 = st.columns(2)
+
+        with col1:
+            if st.button("✅ Yes, this answered my question", use_container_width=True, type="primary"):
+                analysis_time = time.time() - st.session_state['analysis_start_time']
+                session_data = {
+                    'question': st.session_state['question'],
+                    'dependent_var': dependent_var,
+                    'independent_var': independent_var,
+                    'answered': True,
+                    'analysis_time_seconds': round(analysis_time, 2)
+                }
+                st.session_state['ab_log'].append(session_data)
+                st.success("Thank you! Your feedback has been recorded.")
+                st.session_state['charts_generated'] = False
+                st.session_state['question'] = ""
+                st.session_state['analysis_start_time'] = None
+                st.rerun()
+
+        with col2:
+            if st.button("❌ No, this didn't answer my question", use_container_width=True):
+                analysis_time = time.time() - st.session_state['analysis_start_time']
+                session_data = {
+                    'question': st.session_state['question'],
+                    'dependent_var': dependent_var,
+                    'independent_var': independent_var,
+                    'answered': False,
+                    'analysis_time_seconds': round(analysis_time, 2)
+                }
+                st.session_state['ab_log'].append(session_data)
+                st.info("We'll work on improving the analysis.")
+                st.session_state['charts_generated'] = False
+                st.session_state['question'] = ""
+                st.session_state['analysis_start_time'] = None
+                st.rerun()
+
+    # A/B Testing Results Summary (shown all the time if there's data)
+    if len(st.session_state['ab_log']) > 0:
+        st.divider()
+        st.subheader("📊 Feedback Summary")
+
+        log_df = pd.DataFrame(st.session_state['ab_log'])
+
+        # Calculate metrics
+        total_feedback = len(log_df)
+        answered_yes = (log_df['answered'] == True).sum()
+        answered_no = (log_df['answered'] == False).sum()
+        success_rate = (answered_yes / total_feedback * 100) if total_feedback > 0 else 0
+        avg_time = log_df['analysis_time_seconds'].mean()
+
+        # Display metrics
+        metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+        with metric_col1:
+            st.metric("Total Feedback", total_feedback)
+        with metric_col2:
+            st.metric("Questions Answered", answered_yes)
+        with metric_col3:
+            st.metric("Questions Not Answered", answered_no)
+        with metric_col4:
+            st.metric("Success Rate", f"{success_rate:.1f}%")
+        with metric_col5:
+            st.metric("Avg Analysis Time", f"{avg_time:.1f}s")
+
+        # Detailed feedback table
+        st.write("**Recent Feedback:**")
+        display_cols = ['question', 'dependent_var', 'independent_var', 'answered', 'analysis_time_seconds']
+        st.dataframe(
+            log_df[display_cols].rename(columns={
+                'question': 'Question',
+                'dependent_var': 'Dependent Variable',
+                'independent_var': 'Independent Variable',
+                'answered': 'Answered?',
+                'analysis_time_seconds': 'Time (sec)'
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # Visualization of feedback
+        feedback_chart = px.pie(
+            values=[answered_yes, answered_no],
+            names=['✅ Answered', '❌ Not Answered'],
+            title='Question Response Rate',
+            color_discrete_map={'✅ Answered': '#00CC96', '❌ Not Answered': '#EF553B'}
+        )
+        st.plotly_chart(feedback_chart, use_container_width=True)
+
+else:
+    st.info("👈 Upload a CSV dataset to get started")
+    st.write("""
+    ### How to use this Analysis Tool:
+    1. **Upload Data** - Click the file uploader on the left to upload your CSV file
+    2. **Ask a Question** - Enter the question you want to answer with data analysis
+    3. **Select Variables** - Choose your dependent and independent variables
+    4. **Generate Charts** - Click the button to create regression and importance charts
+    5. **View Results** - See the relationship between variables and feature importance
+    6. **Provide Feedback** - Let us know if the charts answered your question (time tracked!)
+    """)
