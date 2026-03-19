@@ -1,60 +1,70 @@
 import streamlit as st
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
+import plotly.express as px
 import random
 import time
 
 # --------------------------------------------------
-# Page configuration
+# Page config
 # --------------------------------------------------
-st.set_page_config(
-    page_title="Bird Strike A/B Testing App",
-    layout="wide"
-)
+st.set_page_config(page_title="A/B Testing Analysis Tool", layout="wide")
+st.title("A/B Testing Analysis Tool")
 
 # --------------------------------------------------
 # Session state
 # --------------------------------------------------
+if "df" not in st.session_state:
+    st.session_state["df"] = None
+if "business_question" not in st.session_state:
+    st.session_state["business_question"] = ""
 if "chart_choice" not in st.session_state:
-    st.session_state.chart_choice = None
-
+    st.session_state["chart_choice"] = None
 if "start_time" not in st.session_state:
-    st.session_state.start_time = None
-
-if "results" not in st.session_state:
-    st.session_state.results = []
+    st.session_state["start_time"] = None
+if "ab_log" not in st.session_state:
+    st.session_state["ab_log"] = []
 
 # --------------------------------------------------
-# App title and question
+# Load uploaded CSV
 # --------------------------------------------------
-st.title("Bird Strike Financial Risk App")
-
-st.header("Business Question")
-st.write(
-    "Which airports have the highest financial risk from bird strikes, "
-    "so airlines should prioritize extra insurance coverage or higher coverage limits there?"
-)
+@st.cache_data
+def load_data(file):
+    return pd.read_csv(file)
 
 # --------------------------------------------------
 # Sidebar
 # --------------------------------------------------
 with st.sidebar:
-    st.header("Settings")
-    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+    st.header("📁 Data Upload")
+    uploaded_file = st.file_uploader("Upload CSV dataset", type=["csv"])
 
-# Stop app until a file is uploaded
 if uploaded_file is None:
-    st.info("Please upload a CSV file in the sidebar to start the analysis.")
+    st.info("👈 Upload a CSV dataset in the sidebar to get started.")
     st.stop()
 
-# --------------------------------------------------
-# Load data
-# --------------------------------------------------
-df = pd.read_csv(uploaded_file)
+df = load_data(uploaded_file)
+st.session_state["df"] = df
 
 # --------------------------------------------------
-# Dataset preview in a container
+# Business question logic
+# --------------------------------------------------
+uploaded_name = uploaded_file.name.lower()
+
+if uploaded_name == "birdstrikes.csv":
+    business_question = (
+        "Which airports have the highest financial risk from bird strikes, "
+        "so airlines should prioritize extra insurance coverage or higher coverage limits there?"
+    )
+else:
+    business_question = st.text_input(
+        "Enter your business question:",
+        value=st.session_state["business_question"],
+        placeholder="Write the business question you want the charts to answer"
+    )
+    st.session_state["business_question"] = business_question
+
+# --------------------------------------------------
+# Dataset preview
 # --------------------------------------------------
 with st.container():
     st.subheader("Dataset Preview")
@@ -62,125 +72,165 @@ with st.container():
     col1, col2 = st.columns(2)
 
     with col1:
-        st.write("First rows of the dataset:")
+        st.write("First rows:")
         st.dataframe(df.head())
 
     with col2:
-        st.write("Dataset shape:")
-        st.write(df.shape)
-        st.write("Columns:")
-        st.write(list(df.columns))
+        st.write("Shape:", df.shape)
+        st.write("Columns:", list(df.columns))
+
+# --------------------------------------------------
+# Show question
+# --------------------------------------------------
+st.subheader("Business Question")
+if business_question.strip():
+    st.write(business_question)
+else:
+    st.warning("Please enter a business question to continue.")
+    st.stop()
 
 # --------------------------------------------------
 # Variable selection
 # --------------------------------------------------
-st.subheader("Select Variables")
+numeric_cols = df.select_dtypes(include="number").columns.tolist()
+all_cols = df.columns.tolist()
 
-all_columns = df.columns.tolist()
-numeric_columns = df.select_dtypes(include="number").columns.tolist()
+st.subheader("Select Variables")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    airport_col = st.selectbox("Select the airport column:", all_columns)
+    category_col = st.selectbox("Select category variable:", all_cols)
 
 with col2:
-    cost_col = st.selectbox("Select the cost column:", numeric_columns)
+    value_col = st.selectbox("Select numeric variable:", numeric_cols)
+
+with st.expander("Optional settings"):
+    top_n = st.slider("Number of categories to show", min_value=5, max_value=20, value=10)
 
 # --------------------------------------------------
-# Optional controls
+# Prepare aggregated data
 # --------------------------------------------------
-with st.expander("Optional filters"):
-    top_n = st.slider("Number of airports to display:", min_value=5, max_value=20, value=10)
+data = df[[category_col, value_col]].dropna()
 
-# --------------------------------------------------
-# Prepare data
-# --------------------------------------------------
-data = df[[airport_col, cost_col]].dropna()
-
-summary = data.groupby(airport_col).agg(
-    strike_count=(cost_col, "count"),
-    total_cost=(cost_col, "sum"),
-    avg_cost=(cost_col, "mean")
+summary = data.groupby(category_col).agg(
+    total_value=(value_col, "sum"),
+    average_value=(value_col, "mean"),
+    count_value=(value_col, "count")
 ).reset_index()
 
-summary = summary.sort_values("total_cost", ascending=False).head(top_n)
+summary = summary.sort_values("total_value", ascending=False).head(top_n)
 
 # --------------------------------------------------
 # A/B testing section
 # --------------------------------------------------
-st.subheader("A/B Testing Experiment")
-st.write("Click the button below to display one of the two charts at random.")
+st.subheader("A/B Testing")
+
+st.write(
+    "Click the button below to randomly display one of two charts. "
+    "Then click the second button to record whether the chart answered the question."
+)
 
 if st.button("Show random chart"):
-    st.session_state.chart_choice = random.choice(["A", "B"])
-    st.session_state.start_time = time.time()
+    st.session_state["chart_choice"] = random.choice(["A", "B"])
+    st.session_state["start_time"] = time.time()
 
 # --------------------------------------------------
-# Show selected chart
+# Show chart A or B randomly
 # --------------------------------------------------
-if st.session_state.chart_choice is not None:
-    fig, ax = plt.subplots(figsize=(10, 6))
+if st.session_state["chart_choice"] is not None:
+    if st.session_state["chart_choice"] == "A":
+        st.write("### Chart A: Total value by category")
 
-    if st.session_state.chart_choice == "A":
-        st.write("### Chart A: Total cost by airport")
-        sns.barplot(data=summary, x="total_cost", y=airport_col, ax=ax)
-        ax.set_xlabel("Total Cost")
-        ax.set_ylabel("Airport")
+        fig = px.bar(
+            summary,
+            x="total_value",
+            y=category_col,
+            orientation="h",
+            title=f"Total {value_col} by {category_col}",
+            labels={"total_value": f"Total {value_col}", category_col: category_col}
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
     else:
-        st.write("### Chart B: Average cost per strike by airport")
-        sns.barplot(data=summary, x="avg_cost", y=airport_col, ax=ax)
-        ax.set_xlabel("Average Cost per Strike")
-        ax.set_ylabel("Airport")
+        st.write("### Chart B: Average value by category")
 
-    plt.tight_layout()
-    st.pyplot(fig)
+        fig = px.bar(
+            summary,
+            x="average_value",
+            y=category_col,
+            orientation="h",
+            title=f"Average {value_col} by {category_col}",
+            labels={"average_value": f"Average {value_col}", category_col: category_col}
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
     # --------------------------------------------------
-    # Answer button
+    # Feedback buttons
     # --------------------------------------------------
-    if st.button("Did I answer your question?"):
-        end_time = time.time()
-        response_time = round(end_time - st.session_state.start_time, 2)
-
-        st.success(f"You answered in {response_time} seconds.")
-
-        st.session_state.results.append({
-            "chart": st.session_state.chart_choice,
-            "time_seconds": response_time
-        })
-
-        st.session_state.chart_choice = None
-        st.session_state.start_time = None
-
-# --------------------------------------------------
-# Results section
-# --------------------------------------------------
-if len(st.session_state.results) > 0:
-    st.subheader("Experiment Results")
-
-    results_df = pd.DataFrame(st.session_state.results)
-
     col1, col2 = st.columns(2)
 
     with col1:
-        st.write("Recorded responses:")
-        st.dataframe(results_df)
+        if st.button("✅ Did I answer your question?"):
+            response_time = round(time.time() - st.session_state["start_time"], 2)
+
+            st.session_state["ab_log"].append({
+                "question": business_question,
+                "chart": st.session_state["chart_choice"],
+                "answered": "Yes",
+                "time_seconds": response_time
+            })
+
+            st.success(f"Feedback recorded. Response time: {response_time} seconds.")
+            st.session_state["chart_choice"] = None
+            st.session_state["start_time"] = None
 
     with col2:
-        st.write("Average response time by chart:")
-        avg_times = results_df.groupby("chart", as_index=False)["time_seconds"].mean()
-        st.dataframe(avg_times)
+        if st.button("❌ No, this did not answer my question"):
+            response_time = round(time.time() - st.session_state["start_time"], 2)
+
+            st.session_state["ab_log"].append({
+                "question": business_question,
+                "chart": st.session_state["chart_choice"],
+                "answered": "No",
+                "time_seconds": response_time
+            })
+
+            st.info(f"Feedback recorded. Response time: {response_time} seconds.")
+            st.session_state["chart_choice"] = None
+            st.session_state["start_time"] = None
 
 # --------------------------------------------------
-# Optional explanation section
+# Results
+# --------------------------------------------------
+if len(st.session_state["ab_log"]) > 0:
+    st.divider()
+    st.subheader("A/B Testing Results")
+
+    log_df = pd.DataFrame(st.session_state["ab_log"])
+    st.dataframe(log_df, use_container_width=True, hide_index=True)
+
+    summary_results = (
+        log_df.groupby("chart")
+        .agg(
+            responses=("chart", "count"),
+            avg_time=("time_seconds", "mean")
+        )
+        .reset_index()
+    )
+
+    st.write("### Average response time by chart")
+    st.dataframe(summary_results, use_container_width=True, hide_index=True)
+
+# --------------------------------------------------
+# Explanation
 # --------------------------------------------------
 with st.expander("How this app works"):
     st.write(
-        "This app uses A/B testing to compare two chart designs. "
-        "When the user clicks 'Show random chart', the app randomly displays Chart A or Chart B. "
-        "Then the app measures how long it takes until the user clicks "
-        "'Did I answer your question?'. The goal is to compare which chart helps users answer "
-        "the business question more effectively."
+        "The app lets the user upload a CSV file and choose variables for analysis. "
+        "If the uploaded file is birdstrikes.csv, the app automatically shows the predefined "
+        "bird strike business question. Otherwise, the user enters a custom business question. "
+        "The app then uses A/B testing: when the user clicks the button, it randomly shows "
+        "Chart A or Chart B. After that, the user indicates whether the chart answered the question. "
+        "The app records the chart shown and the response time."
     )
