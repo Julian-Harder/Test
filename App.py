@@ -9,7 +9,7 @@ import time
 # Configure page
 st.set_page_config(page_title="Analysis Tool", layout="wide")
 st.title("Analysis Tool")
-st.write("**Team members:** Julian Harder, Ian Dromundo, Justin, Luuk van den Hoek")
+st.write("**Team members:** Julian Harder, Ian Dromundo, Justin, Luuk van den Hoek, Alimzhan Shamshitov")
 
 # Initialize session state
 if 'df' not in st.session_state:
