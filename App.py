@@ -8,7 +8,7 @@ import time
 st.title("Bird Strike Insurance App")
 
 st.subheader("Business Question")
-st.write("Which airports have the highest financial risk from bird strikes, so airlines should prioritize extra insurance coverage or higher coverage limits there?")
+st.write("Which airports have the highest financial risk from bird strikes, so should airlines should prioritize extra insurance coverage or higher coverage limits there?")
 
 uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
@@ -84,3 +84,4 @@ if uploaded_file is not None:
 
         st.subheader("Average Time by Chart")
         st.write(results_df.groupby("chart")["time_seconds"].mean().reset_index())
+
